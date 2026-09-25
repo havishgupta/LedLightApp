@@ -17,9 +17,23 @@ object Constants {
     )
 
     val ELK_MODES = mapOf(
-        "Rainbow fade" to 0x86, "Red fade" to 0x87, "Green fade" to 0x88, "Blue fade" to 0x89,
-        "Yellow fade" to 0x8A, "Cyan fade" to 0x8B, "Magenta fade" to 0x8C, "White fade" to 0x8D,
-        "Red-Green" to 0x8E, "Red-Blue" to 0x8F, "Green-Blue" to 0x90, "Jump 7" to 0x8F,
-        "Strobe all" to 0x97, "Strobe red" to 0x98, "Strobe green" to 0x99, "Strobe blue" to 0x9A
+        "Rainbow fade" to 0x8A,
+        "Jump RGB" to 0x87,
+        "Jump 7" to 0x88,
+        "Fade RGB" to 0x89,
+        "Fade Red-Green" to 0x8B,
+        "Fade Red-Blue" to 0x8C,
+        "Fade Green-Blue" to 0x8D,
+        "Crossfade R-G" to 0x8E,
+        "Crossfade R-B" to 0x8F,
+        "Crossfade G-B" to 0x90,
+        "Strobe Red" to 0x91,
+        "Strobe Green" to 0x92,
+        "Strobe Blue" to 0x93,
+        "Strobe Yellow" to 0x94,
+        "Strobe Cyan" to 0x95,
+        "Strobe Magenta" to 0x96,
+        "Strobe White" to 0x97,
+        "Strobe 7" to 0x9A
     )
 }

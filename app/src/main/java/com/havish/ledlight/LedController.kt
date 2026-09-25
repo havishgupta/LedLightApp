@@ -212,8 +212,8 @@ class LedController(private val context: Context) {
                         energyHistory[historyIndex] = currentEnergy
                         historyIndex = (historyIndex + 1) % energyHistory.size
                         
-                        // Beat detection logic
-                        if (currentEnergy > avgEnergy * 1.5f && currentEnergy > 5.0f && framesSinceBeat > 8) {
+                        // Beat detection logic: lower threshold and cooldown so it changes on every beat
+                        if (currentEnergy > avgEnergy * 1.25f && currentEnergy > 2.0f && framesSinceBeat > 3) {
                             // Beat drop! Pick a vibrant random color
                             val randomHue = (Math.random() * 360).toFloat()
                             currentVibeColor = android.graphics.Color.HSVToColor(floatArrayOf(randomHue, 1f, 1f))
@@ -223,7 +223,9 @@ class LedController(private val context: Context) {
                         }
                         
                         // Dynamic brightness based on volume
-                        val volumeScale = (currentEnergy / 15f).coerceIn(0.05f, 1.0f)
+                        // Lower max energy requirement (so it gets bright at lower volumes)
+                        // Higher minimum brightness (0.3f) so low volume isn't completely dark
+                        val volumeScale = (currentEnergy / 6f).coerceIn(0.3f, 1.0f)
                         
                         val r = (android.graphics.Color.red(currentVibeColor) * volumeScale).toInt().coerceIn(0, 255)
                         val g = (android.graphics.Color.green(currentVibeColor) * volumeScale).toInt().coerceIn(0, 255)

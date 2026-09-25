@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.media.audiofx.Visualizer
 import android.util.Log
-import androidx.compose.ui.graphics.Color
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.UUID
@@ -32,6 +31,12 @@ class LedController(private val context: Context) {
     private var lastSendTime = 0L
     private var scanJob: Job? = null
     private val scannedDevices = mutableSetOf<BluetoothDevice>()
+
+    // Vibe beat detection state
+    private var currentVibeColor = android.graphics.Color.HSVToColor(floatArrayOf(0f, 1f, 1f))
+    private var energyHistory = FloatArray(43) // history of ~1 second
+    private var historyIndex = 0
+    private var framesSinceBeat = 0
     
     fun getSavedMacs(): List<String> {
         val macs = prefs.getString("last_macs", "") ?: ""
@@ -190,33 +195,41 @@ class LedController(private val context: Context) {
                 captureSize = Visualizer.getCaptureSizeRange()[1]
                 setDataCaptureListener(object : Visualizer.OnDataCaptureListener {
                     override fun onWaveFormDataCapture(v: Visualizer?, w: ByteArray?, r: Int) {}
-                    override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, r: Int) {
+                    
+                    override fun onFftDataCapture(v: Visualizer?, fft: ByteArray?, rate: Int) {
                         if (fft == null) return
-                        var maxMag = 0f
-                        var domBin = 0
                         var totalMag = 0f
-                        
                         val n = fft.size
                         for (i in 2 until n / 2 step 2) {
                             val real = fft[i].toFloat()
                             val imag = fft[i + 1].toFloat()
-                            val mag = hypot(real, imag)
-                            totalMag += mag
-                            if (mag > maxMag) {
-                                maxMag = mag
-                                domBin = i / 2
-                            }
+                            totalMag += hypot(real, imag)
                         }
                         
-                        val cappedBin = domBin.coerceAtMost(100)
-                        val hue = (cappedBin / 100f) * 360f
-                        val brightness = (totalMag / 1500f).coerceIn(0.0f, 1.0f)
+                        val currentEnergy = totalMag / (n / 2)
+                        val avgEnergy = energyHistory.average().toFloat()
                         
-                        val color = android.graphics.Color.HSVToColor(floatArrayOf(hue, 1f, brightness))
-                        val rC = android.graphics.Color.red(color)
-                        val gC = android.graphics.Color.green(color)
-                        val bC = android.graphics.Color.blue(color)
-                        sendColor(rC, gC, bC)
+                        energyHistory[historyIndex] = currentEnergy
+                        historyIndex = (historyIndex + 1) % energyHistory.size
+                        
+                        // Beat detection logic
+                        if (currentEnergy > avgEnergy * 1.5f && currentEnergy > 5.0f && framesSinceBeat > 8) {
+                            // Beat drop! Pick a vibrant random color
+                            val randomHue = (Math.random() * 360).toFloat()
+                            currentVibeColor = android.graphics.Color.HSVToColor(floatArrayOf(randomHue, 1f, 1f))
+                            framesSinceBeat = 0
+                        } else {
+                            framesSinceBeat++
+                        }
+                        
+                        // Dynamic brightness based on volume
+                        val volumeScale = (currentEnergy / 15f).coerceIn(0.05f, 1.0f)
+                        
+                        val r = (android.graphics.Color.red(currentVibeColor) * volumeScale).toInt().coerceIn(0, 255)
+                        val g = (android.graphics.Color.green(currentVibeColor) * volumeScale).toInt().coerceIn(0, 255)
+                        val b = (android.graphics.Color.blue(currentVibeColor) * volumeScale).toInt().coerceIn(0, 255)
+                        
+                        sendColor(r, g, b)
                     }
                 }, Visualizer.getMaxCaptureRate() / 2, false, true)
                 enabled = true

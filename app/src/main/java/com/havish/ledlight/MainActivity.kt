@@ -10,6 +10,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.*
+import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.grid.*
 import androidx.compose.foundation.shape.CircleShape
@@ -21,27 +23,28 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 
 class MainActivity : ComponentActivity() {
-
     private lateinit var prefs: android.content.SharedPreferences
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         prefs = getSharedPreferences("app_settings", Context.MODE_PRIVATE)
 
-        val requestPermissionLauncher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        val launcher = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
             val intent = Intent(this, BleAudioService::class.java)
             startService(intent)
-            BleAudioService.controller?.autoConnect()
         }
 
-        requestPermissionLauncher.launch(
+        launcher.launch(
             arrayOf(
                 Manifest.permission.BLUETOOTH_CONNECT,
                 Manifest.permission.BLUETOOTH_SCAN,
@@ -77,6 +80,7 @@ fun MainScreen(controller: LedController, prefs: android.content.SharedPreferenc
     var showColorWheel by remember { mutableStateOf(prefs.getBoolean("showColorWheel", true)) }
     var showSwatches by remember { mutableStateOf(prefs.getBoolean("showSwatches", true)) }
     var showModes by remember { mutableStateOf(prefs.getBoolean("showModes", true)) }
+    var showRgbSliders by remember { mutableStateOf(prefs.getBoolean("showRgbSliders", false)) }
 
     var r by remember { mutableFloatStateOf(255f) }
     var g by remember { mutableFloatStateOf(0f) }
@@ -93,14 +97,14 @@ fun MainScreen(controller: LedController, prefs: android.content.SharedPreferenc
     if (showDeviceDialog) {
         AlertDialog(
             onDismissRequest = { showDeviceDialog = false },
-            title = { Text("Select Device") },
+            title = { Text("Select LED Strip") },
             text = {
                 LazyVerticalGrid(columns = GridCells.Fixed(1)) {
                     items(devices.size) { i ->
                         @SuppressLint("MissingPermission")
                         val d = devices[i]
                         TextButton(onClick = { controller.connectToDevice(d); showDeviceDialog = false }) {
-                            Text(d.name ?: d.address)
+                            Text(d.name ?: d.address, fontSize = 16.sp)
                         }
                     }
                 }
@@ -113,11 +117,11 @@ fun MainScreen(controller: LedController, prefs: android.content.SharedPreferenc
         Dialog(onDismissRequest = { showSettings = false }) {
             Card(shape = RoundedCornerShape(16.dp)) {
                 Column(Modifier.padding(24.dp)) {
-                    Text("Settings", style = MaterialTheme.typography.titleLarge)
+                    Text("Customize UI", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.height(16.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = showColorWheel, onCheckedChange = { showColorWheel = it; prefs.edit().putBoolean("showColorWheel", it).apply() })
-                        Text("Show RGB Sliders")
+                        Text("Show Color Wheel")
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Checkbox(checked = showSwatches, onCheckedChange = { showSwatches = it; prefs.edit().putBoolean("showSwatches", it).apply() })
@@ -127,8 +131,12 @@ fun MainScreen(controller: LedController, prefs: android.content.SharedPreferenc
                         Checkbox(checked = showModes, onCheckedChange = { showModes = it; prefs.edit().putBoolean("showModes", it).apply() })
                         Text("Show Effect Modes")
                     }
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Checkbox(checked = showRgbSliders, onCheckedChange = { showRgbSliders = it; prefs.edit().putBoolean("showRgbSliders", it).apply() })
+                        Text("Show Manual RGB Sliders")
+                    }
                     Spacer(Modifier.height(16.dp))
-                    Button(onClick = { showSettings = false }, modifier = Modifier.align(Alignment.End)) { Text("Close") }
+                    Button(onClick = { showSettings = false }, modifier = Modifier.align(Alignment.End)) { Text("Done") }
                 }
             }
         }
@@ -137,7 +145,7 @@ fun MainScreen(controller: LedController, prefs: android.content.SharedPreferenc
     Scaffold(
         topBar = {
             TopAppBar(
-                title = { Text("LED Strip Controller", fontWeight = FontWeight.SemiBold) },
+                title = { Text("LedLight Controller", fontWeight = FontWeight.SemiBold) },
                 actions = {
                     IconButton(onClick = { showSettings = true }) {
                         Icon(Icons.Default.Settings, contentDescription = "Settings")
@@ -148,76 +156,98 @@ fun MainScreen(controller: LedController, prefs: android.content.SharedPreferenc
         }
     ) { padding ->
         Column(
-            modifier = Modifier.padding(padding).padding(16.dp).verticalScroll(rememberScrollState()),
+            modifier = Modifier.padding(padding).padding(horizontal = 16.dp).verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
-            // Status Card
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
-                Column(Modifier.padding(16.dp).fillMaxWidth()) {
+            Spacer(Modifier.height(4.dp))
+            
+            // Connection Card
+            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(24.dp)) {
+                Row(Modifier.padding(20.dp).fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Box(modifier = Modifier.size(10.dp).clip(CircleShape).background(if (connState.contains("Connected")) Color(0xFF38d996) else Color(0xFFFF5C7A)))
-                        Spacer(Modifier.width(8.dp))
-                        Text(connState, fontSize = 14.sp)
+                        val isConn = connState.contains("Connected")
+                        Box(modifier = Modifier.size(12.dp).clip(CircleShape).background(if (isConn) Color(0xFF38d996) else Color(0xFFFF5C7A)))
+                        Spacer(Modifier.width(12.dp))
+                        Text(connState, fontSize = 16.sp, fontWeight = FontWeight.Medium)
                     }
-                    Spacer(Modifier.height(12.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(onClick = { controller.autoConnect() }, modifier = Modifier.weight(1f)) { Text("Auto Connect") }
-                        Button(onClick = { controller.startScan(); showDeviceDialog = true }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface)) { Text("Scan") }
+                    Button(onClick = { controller.autoConnect() }) {
+                        Text("Connect")
                     }
                 }
             }
 
             // Power & Vibe
-            Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
-                Column(Modifier.padding(16.dp).fillMaxWidth()) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Button(onClick = { controller.setPower(true) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38d996), contentColor = Color.Black)) { Text("Power ON") }
-                        Button(onClick = { controller.setPower(false) }, modifier = Modifier.weight(1f), colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFFF5C7A), contentColor = Color.White)) { Text("Power OFF") }
-                    }
-                    Spacer(Modifier.height(16.dp))
-                    Button(
-                        onClick = { controller.toggleVibe() },
-                        modifier = Modifier.fillMaxWidth().height(56.dp),
-                        colors = ButtonDefaults.buttonColors(containerColor = if (isVibing) Color(0xFFFF5C7A) else MaterialTheme.colorScheme.primary)
-                    ) {
-                        Text(if (isVibing) "Stop Music Vibe" else "Start Music Vibe", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp), modifier = Modifier.fillMaxWidth()) {
+                Button(
+                    onClick = { controller.toggleVibe() },
+                    modifier = Modifier.weight(1f).height(64.dp),
+                    shape = RoundedCornerShape(20.dp),
+                    colors = ButtonDefaults.buttonColors(containerColor = if (isVibing) Color(0xFFFF5C7A) else MaterialTheme.colorScheme.primary)
+                ) {
+                    Text(if (isVibing) "Stop Vibe" else "Start Vibe", fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                }
+                
+                Card(modifier = Modifier.weight(1f).height(64.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(20.dp)) {
+                    Row(Modifier.fillMaxSize()) {
+                        Box(Modifier.weight(1f).fillMaxHeight().clickable { controller.setPower(true) }.background(Color(0xFF38d996).copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
+                            Text("ON", color = Color(0xFF38d996), fontWeight = FontWeight.Bold)
+                        }
+                        Box(Modifier.weight(1f).fillMaxHeight().clickable { controller.setPower(false) }.background(Color(0xFFFF5C7A).copy(alpha = 0.2f)), contentAlignment = Alignment.Center) {
+                            Text("OFF", color = Color(0xFFFF5C7A), fontWeight = FontWeight.Bold)
+                        }
                     }
                 }
             }
 
-            // Colors
-            if (showColorWheel || showSwatches) {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
-                    Column(Modifier.padding(16.dp).fillMaxWidth()) {
-                        if (showColorWheel) {
-                            Text("RGB Controls", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                            Spacer(Modifier.height(8.dp))
-                            Slider(value = r, onValueChange = { r = it; controller.sendColor(r.toInt(), g.toInt(), b.toInt()) }, valueRange = 0f..255f, colors = SliderDefaults.colors(thumbColor = Color.Red, activeTrackColor = Color.Red))
-                            Slider(value = g, onValueChange = { g = it; controller.sendColor(r.toInt(), g.toInt(), b.toInt()) }, valueRange = 0f..255f, colors = SliderDefaults.colors(thumbColor = Color.Green, activeTrackColor = Color.Green))
-                            Slider(value = b, onValueChange = { b = it; controller.sendColor(r.toInt(), g.toInt(), b.toInt()) }, valueRange = 0f..255f, colors = SliderDefaults.colors(thumbColor = Color.Blue, activeTrackColor = Color.Blue))
+            // Color Wheel
+            if (showColorWheel) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(24.dp).fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("Color Wheel", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), modifier = Modifier.align(Alignment.Start))
+                        Spacer(Modifier.height(16.dp))
+                        ColorWheel(modifier = Modifier.fillMaxWidth(0.8f)) { rC, gC, bC ->
+                            r = rC.toFloat()
+                            g = gC.toFloat()
+                            b = bC.toFloat()
+                            controller.sendColor(rC, gC, bC)
                         }
-                        
-                        Text("Brightness", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        Spacer(Modifier.height(24.dp))
+                        Text("Brightness", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f), modifier = Modifier.align(Alignment.Start))
                         Slider(value = brightness, onValueChange = { brightness = it; controller.setBrightness(it.toInt()) }, valueRange = 1f..100f)
-                        
-                        if (showSwatches) {
-                            Spacer(Modifier.height(16.dp))
-                            Text("Quick Colors", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
-                            Spacer(Modifier.height(8.dp))
-                            LazyVerticalGrid(columns = GridCells.Fixed(6), modifier = Modifier.height(100.dp), userScrollEnabled = false) {
-                                items(Constants.SWATCHES.size) { i ->
-                                    val (colorInt, _) = Constants.SWATCHES[i]
-                                    Box(
-                                        modifier = Modifier.padding(4.dp).aspectRatio(1f).clip(CircleShape).background(Color(colorInt))
-                                            .clickable { 
-                                                val c = android.graphics.Color.valueOf(colorInt)
-                                                r = c.red() * 255f
-                                                g = c.green() * 255f
-                                                b = c.blue() * 255f
-                                                controller.sendColor(r.toInt(), g.toInt(), b.toInt())
-                                            }
-                                    )
-                                }
+                    }
+                }
+            }
+            
+            if (showRgbSliders) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(20.dp).fillMaxWidth()) {
+                        Text("Manual RGB", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        Spacer(Modifier.height(8.dp))
+                        Slider(value = r, onValueChange = { r = it; controller.sendColor(r.toInt(), g.toInt(), b.toInt()) }, valueRange = 0f..255f, colors = SliderDefaults.colors(thumbColor = Color.Red, activeTrackColor = Color.Red))
+                        Slider(value = g, onValueChange = { g = it; controller.sendColor(r.toInt(), g.toInt(), b.toInt()) }, valueRange = 0f..255f, colors = SliderDefaults.colors(thumbColor = Color.Green, activeTrackColor = Color.Green))
+                        Slider(value = b, onValueChange = { b = it; controller.sendColor(r.toInt(), g.toInt(), b.toInt()) }, valueRange = 0f..255f, colors = SliderDefaults.colors(thumbColor = Color.Blue, activeTrackColor = Color.Blue))
+                    }
+                }
+            }
+
+            // Swatches
+            if (showSwatches) {
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(20.dp).fillMaxWidth()) {
+                        Text("Quick Colors", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        Spacer(Modifier.height(16.dp))
+                        LazyVerticalGrid(columns = GridCells.Fixed(6), modifier = Modifier.height(110.dp), userScrollEnabled = false, verticalArrangement = Arrangement.spacedBy(12.dp), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                            items(Constants.SWATCHES.size) { i ->
+                                val (colorInt, _) = Constants.SWATCHES[i]
+                                Box(
+                                    modifier = Modifier.aspectRatio(1f).clip(CircleShape).background(Color(colorInt))
+                                        .clickable { 
+                                            r = android.graphics.Color.red(colorInt).toFloat()
+                                            g = android.graphics.Color.green(colorInt).toFloat()
+                                            b = android.graphics.Color.blue(colorInt).toFloat()
+                                            controller.sendColor(r.toInt(), g.toInt(), b.toInt())
+                                        }
+                                )
                             }
                         }
                     }
@@ -226,28 +256,67 @@ fun MainScreen(controller: LedController, prefs: android.content.SharedPreferenc
 
             // Modes
             if (showModes) {
-                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(18.dp)) {
-                    Column(Modifier.padding(16.dp).fillMaxWidth()) {
-                        Text("Effect Speed", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                Card(colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), shape = RoundedCornerShape(24.dp)) {
+                    Column(Modifier.padding(20.dp).fillMaxWidth()) {
+                        Text("Effect Speed", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                         Slider(value = speed, onValueChange = { speed = it }, valueRange = 1f..100f)
                         
-                        Text("Built-in Effects", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
                         Spacer(Modifier.height(8.dp))
+                        Text("Built-in Effects", fontSize = 14.sp, color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f))
+                        Spacer(Modifier.height(12.dp))
                         val modeEntries = Constants.ELK_MODES.entries.toList()
-                        LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.height(300.dp)) {
+                        LazyVerticalGrid(columns = GridCells.Fixed(2), modifier = Modifier.height(380.dp), verticalArrangement = Arrangement.spacedBy(8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                             items(modeEntries.size) { i ->
                                 val (name, id) = modeEntries[i]
                                 Button(
                                     onClick = { controller.setMode(id, speed.toInt()) },
-                                    modifier = Modifier.padding(4.dp),
                                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.surfaceVariant, contentColor = MaterialTheme.colorScheme.onSurface),
                                     shape = RoundedCornerShape(12.dp)
-                                ) { Text(name, fontSize = 12.sp) }
+                                ) { Text(name, fontSize = 13.sp) }
                             }
                         }
                     }
                 }
             }
+            Spacer(Modifier.height(24.dp))
         }
+    }
+}
+
+@Composable
+fun ColorWheel(modifier: Modifier = Modifier, onColorSelected: (Int, Int, Int) -> Unit) {
+    Canvas(
+        modifier = modifier
+            .aspectRatio(1f)
+            .pointerInput(Unit) {
+                detectTapGestures { offset -> handleColorWheelTouch(offset, size.width.toFloat(), onColorSelected) }
+            }
+            .pointerInput(Unit) {
+                detectDragGestures { change, _ -> handleColorWheelTouch(change.position, size.width.toFloat(), onColorSelected) }
+            }
+    ) {
+        val colors = listOf(Color.Red, Color.Magenta, Color.Blue, Color.Cyan, Color.Green, Color.Yellow, Color.Red)
+        drawCircle(brush = Brush.sweepGradient(colors, center = center), radius = size.minDimension / 2)
+        drawCircle(brush = Brush.radialGradient(listOf(Color.White, Color.Transparent), center = center, radius = size.minDimension / 2), radius = size.minDimension / 2)
+    }
+}
+
+fun handleColorWheelTouch(offset: Offset, size: Float, onColorSelected: (Int, Int, Int) -> Unit) {
+    val cx = size / 2
+    val cy = size / 2
+    val dx = offset.x - cx
+    val dy = offset.y - cy
+    val dist = Math.hypot(dx.toDouble(), dy.toDouble()).toFloat()
+    val radius = size / 2
+    if (dist <= radius) {
+        var angle = Math.toDegrees(Math.atan2(dy.toDouble(), dx.toDouble())).toFloat()
+        if (angle < 0) angle += 360f
+        val saturation = (dist / radius).coerceIn(0f, 1f)
+        val colorInt = android.graphics.Color.HSVToColor(floatArrayOf(angle, saturation, 1f))
+        onColorSelected(
+            android.graphics.Color.red(colorInt),
+            android.graphics.Color.green(colorInt),
+            android.graphics.Color.blue(colorInt)
+        )
     }
 }
